@@ -1,0 +1,140 @@
+* Continuation-Passing Style Code Generator             -*- outline -*-
+
+This directory contains a general, order-independent, redex-free
+continuation-passing style code generator, available for copying under
+the terms of a three-clause BSD-style licence.
+
+cps.scm                 General code generator and notes on usage.
+cps-sexp-target.scm     Example S-expression output format.
+sexp-to-cps.scm         Example use of the code generator for an
+                          S-expression input format, using
+                          <http://synthcode.com/scheme/match.scm>
+                          to match input patterns.
+
+The terms in the above summary have the following specific meanings:
+
+** Code Generator
+
+This is a set of procedures for generating code in a
+continuation-passing style.
+
+** Continuation-Passing Style
+
+The input language is some recursive expression structure with every
+continuation implicit; the output language is rigidly structured with
+alternating control and data nodes, such as combinations or
+conditionals (control) and variable references or abstractions (data),
+and with every continuation explicit.  The rigid, more uniform
+structure of programs can make code to analyze them easier to write and
+to understand, because it has fewer cases; explicating entities that
+were formerly implicit can make the compiler's data structures clearer.
+
+** Redex-Free
+
+A redex is a REDucible EXpression.  For example, a naive CPS
+transformation of
+
+  (lambda (a)
+    (f (+ 1 a)))
+
+is
+
+  (lambda (c a)
+    ((lambda (c0) (c0 1))
+     (lambda (x0)
+       ((lambda (c1) (c1 a))
+        (lambda (x1)
+          (+ (lambda (t) (f c t)) x0 x1))))))
+
+The terms ((lambda (c0) (c0 1)) (lambda (x0) ...)) and ((lambda (c1)
+(c1 a)) (lambda (x) ...)) are reducible expressions, because we
+trivially have enough syntactic information to yield
+
+  (lambda (c a)
+    (+ (lambda (t) (f c t)) 1 a))
+
+instead.  This code generator does not generate any redexes (or
+redices?) that were not present in the input.
+
+** Order-Independent
+
+This code generator does not impose any particular order on the
+evaluation of subexpressions of combinations.  For example, a
+(redex-free) CPS transformation that orders evaluation of
+subexpressions left-to-right would transform
+
+  (lambda (x)
+    (f (g x) (h x)))
+
+into
+
+  (lambda (c x)
+    (g (lambda (t0) (h (lambda (t1) (f t0 t1)) x)) x)),
+
+and thereby lose valuable information from the source program about
+what sets of expressions may be evaluated in any order.  Instead, this
+code generator generates
+
+  (let-values (((t0) (lambda (c0) (g c0 x)))
+               ((t1) (lambda (c1) (h c1 x))))
+    (f t0 t1)),
+
+where LET-VALUES has a slightly unusual meaning here: the right-hand
+expression of each clause is not an expression of a value for the
+clause's variable, but an expression for a procedure that takes a
+continuation and passes to that continuation a value for the clause's
+variable.  (There is a similar construction for LETREC-VALUES.)
+
+If you want to order the subproblems, you can do that by changing the
+code to use the commented CPS/GENERATE-SUBPROBLEMS-IN-ORDER procedure
+rather than CPS/GENERATE-SUBPROBLEMS.
+
+** General
+
+The code generator is independent of the formats of the input and
+output languages.  For example, they might both be some restricted form
+of S-expressions, or they might be directed control flow graphs.
+
+* Shortcomings
+
+This approach fails to transmit information about the reification of
+continuations between branches of control flow; it thus requires a
+subsequent global analysis to transmit this information, or else a
+naive compiler would cons needless closures (possibly on the stack) for
+certain join point continuations.  E.g., for
+
+   (lambda (x y z)
+     (f (or x (frob y)) z)),
+
+this code generator will generate
+
+   (lambda (c x y z)
+     (let ((j (lambda (t) (f c t z))))
+       (if (true? x)
+           (j x)
+           (frob j y)))).
+
+It would be better to generate
+
+   (lambda (c x y z)
+     (let ((j (lambda (t) (f c t z))))
+       (if (true? x)
+           (j x)
+           (frob (lambda (t) (j t)) y)))),
+
+so that a naive compiler could defer consing a closure to the
+alternative branch of the conditional, because J is used only in an
+operator position and thus serves only for control, not for data.  In a
+control flow graph representation of the program, such as that used by
+LIAR, J would not exist at all as a variable; instead the node for the
+truth test of X would have an edge directly to the combination (F T Z),
+while the alternative branch would have a continuation with an edge
+into that combination.
+
+* Copying
+
+Copyright (c) 2009, Taylor R. Campbell.
+
+Verbatim copying and distribution of this entire article are permitted
+worldwide, without royalty, in any medium, provided this notice, and
+the copyright notice, are preserved.
